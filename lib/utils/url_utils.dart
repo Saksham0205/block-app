@@ -28,3 +28,8 @@ List<String> parseDomains(String input) {
   }
   return seen.toList();
 }
+
+/// Same rule the Android service applies: [host] is [domain] itself or any
+/// subdomain of it, so a blocked `x.com` covers every page on it.
+bool domainMatches(String host, String domain) =>
+    host == domain || host.endsWith('.$domain');

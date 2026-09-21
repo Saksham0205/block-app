@@ -3,6 +3,9 @@ package com.example.block
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -23,6 +26,9 @@ class BlockAccessibilityService : AccessibilityService() {
     private var rules: List<Rule> = emptyList()
     private var foregroundPackage: String? = null
     private var ignoredPackages: Set<String> = emptySet()
+
+    /** Every installed app that can open web pages, not just well-known ones. */
+    private var browserPackages: Set<String> = emptySet()
     private var lastBlockAt = 0L
 
     private val prefsListener =
@@ -50,6 +56,7 @@ class BlockAccessibilityService : AccessibilityService() {
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             imm.enabledInputMethodList.forEach { add(it.packageName) }
         }
+        browserPackages = findBrowsers()
         getSharedPreferences(RuleStore.PREFS, MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
         handler.postDelayed(ticker, TICK_MS)
@@ -81,8 +88,8 @@ class BlockAccessibilityService : AccessibilityService() {
                 evaluate(pkg, rootInActiveWindow)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Only browsers need content inspection (URL bar changes).
-                if (pkg in URL_BAR_IDS && pkg == foregroundPackage) {
+                // Only browsers need content inspection (address bar changes).
+                if (pkg == foregroundPackage && pkg in browserPackages) {
                     evaluate(pkg, rootInActiveWindow)
                 }
             }
@@ -104,9 +111,16 @@ class BlockAccessibilityService : AccessibilityService() {
             return
         }
 
+        if (pkg !in browserPackages) return
         if (root == null || root.packageName?.toString() != pkg) return
-        val host = readBrowserHost(root, pkg) ?: return
-        active.firstOrNull { it.blocksHost(host) }?.let { block(it, host) }
+
+        // Any page under a blocked domain counts, whatever its path or query.
+        for (host in browserHosts(root, pkg)) {
+            active.firstOrNull { it.blocksHost(host) }?.let {
+                block(it, host)
+                return
+            }
+        }
     }
 
     private fun block(rule: Rule, target: String) {
@@ -135,37 +149,74 @@ class BlockAccessibilityService : AccessibilityService() {
         pkg
     }
 
-    /** Returns the bare host currently shown in a known browser's URL bar. */
-    private fun readBrowserHost(root: AccessibilityNodeInfo, pkg: String): String? {
-        val ids = URL_BAR_IDS[pkg] ?: return null
-        for (id in ids) {
-            val text = root.findAccessibilityNodeInfosByViewId(id)
-                .firstOrNull()?.text?.toString()
-            if (!text.isNullOrBlank()) return extractHost(text)
+    /** Packages that handle plain https links: Chrome, Firefox, Samsung… */
+    private fun findBrowsers(): Set<String> {
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        val resolved = if (Build.VERSION.SDK_INT >= 33) {
+            packageManager.queryIntentActivities(probe, PackageManager.ResolveInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(probe, 0)
         }
-        return null
+        return (resolved.map { it.activityInfo.packageName } + URL_BAR_IDS.keys)
+            .toSet() - packageName
     }
 
-    private fun extractHost(text: String): String? {
-        var value = text.trim().lowercase()
-        if (value.contains(' ')) return null // a search query, not a URL
-        value = value.replaceFirst(Regex("^[a-z][a-z0-9+.-]*://"), "")
-        value = value.split('/', '?', '#').first()
-        value = value.substringAfterLast('@').replaceFirst(Regex(":\\d+$"), "")
-        value = value.removePrefix("www.")
-        return value.takeIf { it.contains('.') && it.matches(HOST_REGEX) }
+    /**
+     * Hosts currently shown in a browser's address bar. Tries the browser's
+     * known view id first; if that yields nothing (a browser update renamed
+     * it, or it's a browser we don't know), scans for anything that looks
+     * like an address bar instead.
+     */
+    private fun browserHosts(root: AccessibilityNodeInfo, pkg: String): List<String> {
+        val hosts = LinkedHashSet<String>()
+
+        URL_BAR_IDS[pkg]?.forEach { id ->
+            root.findAccessibilityNodeInfosByViewId(id).forEach { node ->
+                node.text?.toString()?.let(UrlMatcher::hostOf)?.let(hosts::add)
+            }
+        }
+        if (hosts.isEmpty()) scanForAddressBar(root, hosts)
+        return hosts.toList()
+    }
+
+    /**
+     * Breadth-first walk of the browser's own UI. Only nodes whose view id
+     * looks like an address bar are read, so text inside web pages (which has
+     * no view id) can never trigger a block.
+     */
+    private fun scanForAddressBar(root: AccessibilityNodeInfo, out: MutableSet<String>) {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < MAX_SCAN_NODES) {
+            val node = queue.removeFirst()
+            visited++
+
+            val id = node.viewIdResourceName.orEmpty()
+            if (id.isNotEmpty() && ADDRESS_ID_HINT.containsMatchIn(id)) {
+                node.text?.toString()?.let(UrlMatcher::hostOf)?.let(out::add)
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let(queue::add)
+            }
+        }
     }
 
     companion object {
         private const val TICK_MS = 4_000L
-        private const val DEBOUNCE_MS = 1_200L
-        private val HOST_REGEX = Regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+        private const val DEBOUNCE_MS = 800L
+        private const val MAX_SCAN_NODES = 400
+        private val ADDRESS_ID_HINT =
+            Regex("url|omnibox|address|location_bar|toolbar_edit", RegexOption.IGNORE_CASE)
 
-        /** Address-bar view ids for popular browsers. */
+        /** Address-bar view ids for popular browsers (fast path). */
         private val URL_BAR_IDS = mapOf(
             "com.android.chrome" to listOf("com.android.chrome:id/url_bar"),
             "com.chrome.beta" to listOf("com.chrome.beta:id/url_bar"),
             "com.chrome.dev" to listOf("com.chrome.dev:id/url_bar"),
+            "com.chrome.canary" to listOf("com.chrome.canary:id/url_bar"),
             "com.brave.browser" to listOf("com.brave.browser:id/url_bar"),
             "com.microsoft.emmx" to listOf("com.microsoft.emmx:id/url_bar"),
             "com.vivaldi.browser" to listOf("com.vivaldi.browser:id/url_bar"),

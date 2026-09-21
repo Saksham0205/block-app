@@ -32,8 +32,8 @@ data class Rule(
 
     fun blocksApp(packageName: String) = packageName in apps
 
-    fun blocksHost(host: String) =
-        domains.any { host == it || host.endsWith(".$it") }
+    /** [host] is a blocked domain or any subdomain of one (every path on it). */
+    fun blocksHost(host: String) = UrlMatcher.matchesAny(host, domains)
 
     private fun isoDay(c: Calendar) = (c.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
 }

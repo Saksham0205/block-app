@@ -1,5 +1,6 @@
 import 'package:block/models/block_rule.dart';
 import 'package:block/state/status.dart';
+import 'package:block/utils/site_apps.dart';
 import 'package:block/utils/url_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -39,6 +40,38 @@ void main() {
         parseDomains('youtube.com, https://www.youtube.com/x\nreddit.com'),
         ['youtube.com', 'reddit.com'],
       );
+    });
+  });
+
+  group('a blocked domain covers every page on it', () {
+    // Mirrors android/.../UrlMatcherTest.kt so both sides agree.
+    test('any path, query or subdomain matches', () {
+      for (final url in [
+        'x.com/home',
+        'https://x.com/home?ref=1#top',
+        'https://mobile.x.com/a/b?c=d',
+        'HTTPS://WWW.X.COM/HOME',
+      ]) {
+        final host = normalizeDomain(url)!;
+        expect(domainMatches(host, 'x.com'), isTrue, reason: url);
+      }
+    });
+
+    test('lookalikes do not match', () {
+      for (final url in ['max.com/home', 'notx.com', 'x.com.evil.example/x']) {
+        final host = normalizeDomain(url)!;
+        expect(domainMatches(host, 'x.com'), isFalse, reason: url);
+      }
+    });
+
+    test('pasting a deep link stores just the site', () {
+      expect(parseDomains('https://x.com/home?ref=1'), ['x.com']);
+    });
+
+    test('sites map to the apps that open their links', () {
+      expect(appsForDomains(['x.com']), {'com.twitter.android'});
+      expect(appsForDomains(['m.youtube.com']), {'com.google.android.youtube'});
+      expect(appsForDomains(['example.org']), isEmpty);
     });
   });
 

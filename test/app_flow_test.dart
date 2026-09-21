@@ -15,6 +15,7 @@ void _mockNative(TestWidgetsFlutterBinding binding) {
           return [
             {'package': 'com.instagram.android', 'label': 'Instagram', 'icon': null},
             {'package': 'com.google.android.youtube', 'label': 'YouTube', 'icon': null},
+            {'package': 'com.twitter.android', 'label': 'X', 'icon': null},
           ];
         case 'isServiceEnabled':
           return true;
@@ -88,6 +89,32 @@ void main() {
     await tester.tap(find.byTooltip('Add'));
     await tester.pumpAndSettle();
     expect(find.textContaining("doesn't look like a website"), findsOneWidget);
+  });
+
+  testWidgets('a deep link previews as the whole site, and offers its app',
+      (tester) async {
+    tallScreen(tester);
+    await tester.pumpWidget(const ProviderScope(child: BlockApp()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create your first block'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'https://x.com/home?ref=1');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Blocks everything on x.com'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Add'));
+    await tester.pumpAndSettle();
+    expect(find.text('x.com'), findsOneWidget); // stored as the bare site
+
+    // X's own app would open x.com/home directly, so it is suggested.
+    expect(find.textContaining('opens these links too'), findsOneWidget);
+    await tester.tap(find.text('Block app'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('opens these links too'), findsNothing);
+    expect(find.text('Change apps'), findsOneWidget);
+    // Let flutter_animate's just-started timer for the new chip fire.
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('pick apps from the installed list', (tester) async {

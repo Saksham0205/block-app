@@ -5,8 +5,10 @@ import 'package:material_ui/material_ui.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models/block_rule.dart';
+import '../models/installed_app.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import '../utils/site_apps.dart';
 import '../utils/url_utils.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/neo.dart';
@@ -173,7 +175,7 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
                   _Section(
                     title: 'Websites',
                     hint: 'Paste a link. The whole site is blocked, subdomains included.',
-                    child: _websitesSection(),
+                    child: _websitesSection(byPackage),
                   ),
                   _Section(
                     title: 'Time slot',
@@ -252,7 +254,7 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
   }
 
   // ── Apps ─────────────────────────────────────────────────────────────
-  Widget _appsSection(Map<String, dynamic> byPackage) {
+  Widget _appsSection(Map<String, InstalledApp> byPackage) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -287,7 +289,14 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
   }
 
   // ── Websites ─────────────────────────────────────────────────────────
-  Widget _websitesSection() {
+  Widget _websitesSection(Map<String, InstalledApp> byPackage) {
+    // What the text in the field would add, shown live so nothing is a surprise.
+    final preview = parseDomains(_urlController.text);
+    // Apps that own the blocked sites: their links open there, not in a browser.
+    final suggested = appsForDomains(_domains)
+        .where((pkg) => byPackage.containsKey(pkg) && !_apps.contains(pkg))
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -311,9 +320,7 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
                 autocorrect: false,
                 textInputAction: TextInputAction.done,
                 onSubmitted: _addDomainsFrom,
-                onChanged: (_) {
-                  if (_urlError != null) setState(() => _urlError = null);
-                },
+                onChanged: (_) => setState(() => _urlError = null),
                 style: AppText.body,
                 cursorColor: AppColors.violet,
                 decoration: InputDecoration(
@@ -340,6 +347,24 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(_urlError!, style: AppText.caption.copyWith(color: AppColors.coral)),
+          )
+        else if (preview.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(LucideIcons.shieldCheck, size: 16, color: AppColors.violet),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Blocks everything on ${preview.join(', ')}: every page, '
+                  'link and ?query.',
+                  style: AppText.caption.copyWith(color: AppColors.text),
+                ),
+              ),
+            ]),
           ),
         if (_domains.isNotEmpty)
           Padding(
@@ -356,6 +381,18 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
                     onRemove: () => setState(() => _domains.remove(d)),
                   ),
               ],
+            ),
+          ),
+        for (final pkg in suggested)
+          Padding(
+            key: ValueKey('suggest-$pkg'),
+            padding: const EdgeInsets.only(top: 14),
+            child: _AppSuggestion(
+              app: byPackage[pkg]!,
+              onAdd: () => setState(() {
+                _apps.add(pkg);
+                _formError = null;
+              }),
             ),
           ),
       ],
@@ -490,6 +527,46 @@ class _Section extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Offered when a blocked site has its own app: links open there directly.
+class _AppSuggestion extends StatelessWidget {
+  const _AppSuggestion({required this.app, required this.onAdd});
+
+  final InstalledApp app;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.violet.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.violet.withValues(alpha: 0.5)),
+      ),
+      child: Row(children: [
+        AppIcon(app: app, size: 38),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${app.label} app opens these links too',
+                style: AppText.subheading.copyWith(fontSize: 14)),
+            const SizedBox(height: 2),
+            Text('Blocking only the site leaves the app open.',
+                style: AppText.caption.copyWith(fontSize: 12)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        NeoButton(
+          label: 'Block app',
+          compact: true,
+          expand: false,
+          onPressed: onAdd,
+        ),
+      ]),
+    ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.15, curve: Curves.easeOutCubic);
   }
 }
 
