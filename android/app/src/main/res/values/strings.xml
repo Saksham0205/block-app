@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Block</string>
+    <string name="accessibility_service_label">Block</string>
+    <string name="accessibility_description">Lets Block notice which app or website is open so it can cover the ones you scheduled to block. Nothing on screen is stored or sent anywhere.</string>
+</resources>
