@@ -3,21 +3,30 @@ import 'package:flutter/services.dart';
 
 import '../models/block_rule.dart';
 import '../models/installed_app.dart';
+import 'windows_blocker.dart';
 
 /// Talks to the Kotlin side (installed apps, rule sync, accessibility state).
 ///
-/// Blocking only exists on Android. On other platforms (desktop / web, used
-/// for previewing the UI) every call falls back to harmless sample data.
+/// Blocking exists on Android (accessibility service) and Windows
+/// ([WindowsBlocker]). On other platforms (web, macOS, Linux, used for
+/// previewing the UI) every call falls back to harmless sample data.
 class NativeBridge {
   NativeBridge._();
   static final instance = NativeBridge._();
 
   static const _channel = MethodChannel('com.example.block/native');
 
+  bool get isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
   bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   Future<List<InstalledApp>> getInstalledApps() async {
+    if (isWindows) {
+      return (await WindowsBlocker.instance.installedApps())
+        ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    }
     if (!isSupported) return _sampleApps;
     final raw = await _channel.invokeListMethod<Map>('getInstalledApps') ?? [];
     final apps = raw
@@ -34,17 +43,23 @@ class NativeBridge {
   /// Pushes the current rules to the native service, which keeps its own copy
   /// so blocking works even when the Flutter UI isn't running.
   Future<void> syncRules(List<BlockRule> rules) async {
+    if (isWindows) return WindowsBlocker.instance.syncRules(rules);
     if (!isSupported) return;
     final json = rules.map((r) => r.toJson()).toList();
     await _channel.invokeMethod('saveRules', {'rules': json});
   }
 
+  /// Android: the accessibility service is on. Windows: we can edit the hosts
+  /// file whenever a rule blocks a site (needs administrator rights).
   Future<bool> isBlockingServiceEnabled() async {
+    if (isWindows) return !await WindowsBlocker.instance.needsAdmin;
     if (!isSupported) return true;
     return await _channel.invokeMethod<bool>('isServiceEnabled') ?? false;
   }
 
+  /// Android: opens accessibility settings. Windows: restarts as administrator.
   Future<void> openAccessibilitySettings() async {
+    if (isWindows) return WindowsBlocker.instance.relaunchAsAdmin();
     if (!isSupported) return;
     await _channel.invokeMethod('openAccessibilitySettings');
   }

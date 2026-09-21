@@ -256,6 +256,7 @@ class _ServiceBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enabled = ref.watch(serviceEnabledProvider).value ?? true;
     if (enabled) return const SizedBox.shrink();
+    final windows = NativeBridge.instance.isWindows;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -273,28 +274,32 @@ class _ServiceBanner extends ConsumerWidget {
             ]),
             const SizedBox(height: 8),
             Text(
-              'Turn on the Block accessibility service so it can tell when a '
-              'blocked app or site is opened. Nothing on screen is stored or sent.',
+              windows
+                  ? 'Windows only lets administrators block websites. Restart '
+                      'Block as administrator so it can. Blocked apps work either way.'
+                  : 'Turn on the Block accessibility service so it can tell when a '
+                      'blocked app or site is opened. Nothing on screen is stored or sent.',
               style: AppText.bodyMuted.copyWith(fontSize: 14),
             ),
             const SizedBox(height: 14),
             Row(children: [
               NeoButton(
-                label: 'Turn on',
+                label: windows ? 'Run as administrator' : 'Turn on',
                 compact: true,
                 expand: false,
                 color: const Color(0xFFFFB020),
                 onPressed: NativeBridge.instance.openAccessibilitySettings,
               ),
               const SizedBox(width: 6),
-              GestureDetector(
-                onTap: NativeBridge.instance.openAppInfo,
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text("Can't switch it on?",
-                      style: AppText.caption.copyWith(color: AppColors.text)),
+              if (!windows)
+                GestureDetector(
+                  onTap: NativeBridge.instance.openAppInfo,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Text("Can't switch it on?",
+                        style: AppText.caption.copyWith(color: AppColors.text)),
+                  ),
                 ),
-              ),
             ]),
           ],
         ),
